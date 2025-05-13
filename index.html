@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Game Tembak Musuh Pesawat</title>
+<style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  body, html {
+    height: 100%;
+    overflow: hidden;
+    background: linear-gradient(to bottom, #00111a, #004466);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  }
+  #gameCanvas {
+    background: url('https://i.ibb.co/r6kVGHF/starfield.png');
+    background-size: cover;
+    display: block;
+    margin: 0 auto;
+    border: 3px solid #0ff;
+    border-radius: 12px;
+    image-rendering: pixelated;
+    touch-action: none;
+  }
+  #scoreBoard {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #0ff;
+    font-size: 24px;
+    font-weight: bold;
+    text-shadow: 0 0 7px #0ff;
+    user-select: none;
+  }
+  #instructions {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #0ff;
+    font-size: 14px;
+    font-weight: 600;
+    text-shadow: 0 0 6px #0ff;
+    user-select: none;
+    text-align: center;
+    opacity: 0.75;
+    width: 100%;
+    max-width: 480px;
+    padding: 0 10px;
+  }
+  #startButton {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #0ff;
+    border: none;
+    color: #002e2e;
+    font-size: 20px;
+    font-weight: bold;
+    padding: 16px 32px;
+    border-radius: 12px;
+    cursor: pointer;
+    box-shadow: 0 0 15px #0ffaa8aa inset;
+    transition: background-color 0.3s ease;
+    user-select: none;
+  }
+  #startButton:hover {
+    background: #33ffcc;
+  }
+</style>
+</head>
+<body>
+<div id="scoreBoard">Score: 0</div>
+<button id="startButton">MULAI GAME</button>
+<canvas id="gameCanvas" width="350" height="600" tabindex="0" aria-label="Game Tembak Musuh Pesawat"></canvas>
+<div id="instructions">Gunakan panah kiri dan kanan untuk bergerak, tombol spasi untuk menembak. Tembak semua musuh!</div>
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const scoreBoard = document.getElementById('scoreBoard');
+  const startButton = document.getElementById('startButton');
+  const instructions = document.getElementById('instructions');
+
+  let w = canvas.width;
+  let h = canvas.height;
+
+  // Game state
+  let gameRunning = false;
+  let score = 0;
+
+  // Player config
+  const playerWidth = 40;
+  const playerHeight = 40;
+  const playerSpeed = 6;
+  let playerX = (w - playerWidth) / 2;
+  const playerY = h - playerHeight - 10;
+
+  // Bullets
+  const bulletSpeed = 10;
+  const bullets = [];
+
+  // Enemy config
+  const enemyWidth = 36;
+  const enemyHeight = 36;
+  const enemyRows = 4;
+  const enemyCols = 8;
+  let enemies = [];
+  let enemyXDir = 1;
+  let enemySpeed = 1;
+  const enemyDropDistance = 20;
+
+  // Controls
+  const keys = {
+    left: false,
+    right: false,
+    space: false,
+  };
+
+  // Load images
+  const playerImg = new Image();
+  playerImg.src = 'https://i.ibb.co/hKvWLZM/jetplane.png'; // small pixel plane icon
+
+  const enemyImg = new Image();
+  enemyImg.src = 'https://i.ibb.co/mR9KhQV/enemy-plane.png'; // small pixel enemy plane icon
+
+  const bulletImg = new Image();
+  bulletImg.src = 'https://i.ibb.co/3c4TgM8/bullet.png';
+
+  // Sound setup
+  let shootSound, explosionSound;
+  try {
+    shootSound = new Audio('https://actions.google.com/sounds/v1/impacts/metal_hit_and_fall.ogg');
+    explosionSound = new Audio('https://actions.google.com/sounds/v1/explosions/explosion.ogg');
+  } catch(e) {
+    // Sound fallback
+    shootSound = null; 
+    explosionSound = null;
+  }
+
+  // Initialize enemies array
+  function createEnemies() {
+    enemies = [];
+    for(let row = 0; row < enemyRows; row++) {
+      for(let col = 0; col < enemyCols; col++) {
+        enemies.push({
+          x: col * (enemyWidth + 12) + 20,
+          y: row * (enemyHeight + 14) + 20,
+          width: enemyWidth,
+          height: enemyHeight,
+          alive: true,
+        });
+      }
+    }
+  }
+
+  // Draw player
+  function drawPlayer() {
+    ctx.drawImage(playerImg, playerX, playerY, playerWidth, playerHeight);
+  }
+
+  // Draw enemies
+  function drawEnemies() {
+    enemies.forEach(enemy => {
+      if(enemy.alive) {
+        ctx.drawImage(enemyImg, enemy.x, enemy.y, enemy.width, enemy.height);
+      }
+    });
+  }
+
+  // Draw bullets
+  function drawBullets() {
+    bullets.forEach(bullet => {
+      ctx.fillStyle = '#0ff';
+      ctx.beginPath();
+      ctx.rect(bullet.x, bullet.y, bullet.width, bullet.height);
+      ctx.fill();
+    });
+  }
+
+  // Update bullets positions
+  function updateBullets() {
+    for(let i = bullets.length - 1; i >= 0; i--) {
+      bullets[i].y -= bulletSpeed;
+      if(bullets[i].y + bullets[i].height < 0) {
+        bullets.splice(i,1);
+        continue;
+      }
+      // Check collision with enemies
+      for(let j = 0; j < enemies.length; j++) {
+        const e = enemies[j];
+        if(e.alive && rectsOverlap(bullets[i], e)) {
+          e.alive = false;
+          bullets.splice(i,1);
+          score += 10;
+          if(explosionSound) explosionSound.currentTime = 0, explosionSound.play();
+          break;
+        }
+      }
+    }
+  }
+
+  // Update enemies position
+  function updateEnemies() {
+    let shiftDown = false;
+
+    // Check edges to decide direction change
+    let maxX = Math.max(...enemies.filter(e => e.alive).map(e => e.x + e.width));
+    let minX = Math.min(...enemies.filter(e => e.alive).map(e => e.x));
+    if(maxX > w - 20 && enemyXDir > 0) {
+      enemyXDir = -1;
+      shiftDown = true;
+    } else if(minX < 20 && enemyXDir < 0) {
+      enemyXDir = 1;
+      shiftDown = true;
+    }
+
+    enemies.forEach(enemy => {
+      if(enemy.alive) {
+        enemy.x += enemyXDir * enemySpeed;
+        if(shiftDown) {
+          enemy.y += enemyDropDistance;
+          if(enemy.y + enemy.height >= playerY) {
+            gameOver();
+          }
+        }
+      }
+    });
+
+    // Increase speed as enemies die
+    const aliveCount = enemies.filter(e => e.alive).length;
+    enemySpeed = 1 + (enemyRows * enemyCols - aliveCount) * 0.1;
+
+    // Win condition
+    if(aliveCount === 0) {
+      gameWin();
+    }
+  }
+
+  // Rectangular collision detection
+  function rectsOverlap(a, b) {
+    return !(b.x > a.x + a.width ||
+             b.x + b.width < a.x ||
+             b.y > a.y + a.height ||
+             b.y + b.height < a.y);
+  }
+
+  // Draw everything
+  function draw() {
+    ctx.clearRect(0, 0, w, h);
+    drawPlayer();
+    drawEnemies();
+    drawBullets();
+  }
+
+  // Game loop
+  function gameLoop() {
+    if(!gameRunning) return;
+
+    updatePlayer();
+    updateBullets();
+    updateEnemies();
+    draw();
+    updateScore();
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  // Update player position based on keys
+  function updatePlayer() {
+    if(keys.left && playerX > 0) {
+      playerX -= playerSpeed;
+      if(playerX < 0) playerX = 0;
+    }
+    if(keys.right && playerX < w - playerWidth) {
+      playerX += playerSpeed;
+      if(playerX > w - playerWidth) playerX = w - playerWidth;
+    }
+  }
+
+  // Shoot bullet
+  function shoot() {
+    if(!gameRunning) return;
+    // Limit bullet rate
+    if(Date.now() - lastShot < 300) return;
+    lastShot = Date.now();
+    const bullet = {
+      x: playerX + playerWidth / 2 - 3,
+      y: playerY - 8,
+      width: 6,
+      height: 14,
+    };
+    bullets.push(bullet);
+    if(shootSound) {
+      shootSound.currentTime = 0;
+      shootSound.play();
+    }
+  }
+
+  function updateScore() {
+    scoreBoard.textContent = `Score: ${score}`;
+  }
+
+  // Key handlers
+  function keyDownHandler(e) {
+    if(e.code === 'ArrowLeft') keys.left = true;
+    else if(e.code === 'ArrowRight') keys.right = true;
+    else if(e.code === 'Space') {
+      keys.space = true;
+      shoot();
+    }
+  }
+  function keyUpHandler(e) {
+    if(e.code === 'ArrowLeft') keys.left = false;
+    else if(e.code === 'ArrowRight') keys.right = false;
+    else if(e.code === 'Space') keys.space = false;
+  }
+
+  // Touch support for mobile - simple left/right buttons and tap to shoot
+  let touchStartX = null;
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if(!gameRunning) return;
+    touchStartX = e.touches[0].clientX;
+  }, {passive:false});
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if(!gameRunning) return;
+    const touchX = e.touches[0].clientX;
+    if(touchX < touchStartX - 10) {
+      keys.left = true;
+      keys.right = false;
+    } else if(touchX > touchStartX + 10) {
+      keys.right = true;
+      keys.left = false;
+    } else {
+      keys.left = false;
+      keys.right = false;
+    }
+  }, {passive:false});
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    keys.left = false;
+    keys.right = false;
+    shoot();
+  }, {passive:false});
+
+  // Game over
+  function gameOver() {
+    gameRunning = false;
+    startButton.style.display = 'block';
+    instructions.textContent = 'GAME OVER! Tekan MULAI GAME untuk mencoba lagi.';
+  }
+
+  // Game win
+  function gameWin() {
+    gameRunning = false;
+    startButton.style.display = 'block';
+    instructions.textContent = 'SELAMAT! Kamu menang! Tekan MULAI GAME untuk main lagi.';
+  }
+
+  // Restart game
+  function startGame() {
+    score = 0;
+    playerX = (w - playerWidth) / 2;
+    bullets.length = 0;
+    createEnemies();
+    enemyXDir = 1;
+    enemySpeed = 1;
+    instructions.textContent = 'Gunakan panah kiri dan kanan untuk bergerak, tombol spasi untuk menembak. Tembak semua musuh!';
+    startButton.style.display = 'none';
+    gameRunning = true;
+    lastShot = 0;
+    canvas.focus();
+    gameLoop();
+  }
+
+  // Initialize game
+  createEnemies();
+
+  let lastShot = 0;
+
+  window.addEventListener('keydown', keyDownHandler);
+  window.addEventListener('keyup', keyUpHandler);
+  startButton.addEventListener('click', startGame);
+
+  // Make canvas focusable for keyboard controls
+  canvas.setAttribute('tabindex', '0');
+})();
+</script>
+</body>
+</html>
+
+```
